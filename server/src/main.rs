@@ -1,8 +1,3 @@
-use serde::{
-    Deserialize,
-    Serialize
-};
-
 use std::{
     sync::{Arc,Mutex},
     net::{TcpListener,TcpStream},
@@ -18,38 +13,7 @@ use anyhow::{
     bail,
     Result
 };
-
-#[derive(Debug,Serialize,Deserialize,Clone)]
-enum Entity {
-    Controller,
-    Administrator(String),
-    Subject(String)
-}
-
-#[derive(Debug,Serialize,Deserialize,Clone)]
-struct Envelope<T> {
-    sender:Entity,
-    payload:T,
-    signature:String
-}
-
-#[derive(Debug,Serialize,Deserialize,Clone)]
-enum Command {
-    Authorize { subject:String,
-		duration:f64 },
-    GetAuthorization { subject:String },
-    GetStatus { subject:String },
-    Cancel { subject:String },
-}
-
-#[derive(Debug,Serialize,Deserialize,Clone)]
-enum Response {
-    Ack,
-    Authorization {
-	subject:String,
-	until:f64
-    },
-}
+use discipline_net::*;
 
 struct Config {
 }
@@ -102,7 +66,7 @@ impl ApiServer {
     fn handle(ctl:Arc<Mutex<Controller>>,stream:TcpStream)->Result<()> {
 	let mut websocket = accept(stream)?;
 	loop {
-	    let msg = websocket.read_message()?;
+	    let msg = websocket.read()?;
 	    if msg.is_close() {
 		break;
 	    }
@@ -110,7 +74,7 @@ impl ApiServer {
 		Self::handle_message(&ctl,&msg)
 		.map_err(|e| format!("{}",e));
 	    let v = serde_json::to_string(&response)?;
-	    websocket.write_message(Message::Text(v))?;
+	    websocket.send(Message::Text(v))?;
 	}
 	Ok(())
     }

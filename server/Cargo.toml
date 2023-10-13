@@ -1,0 +1,24 @@
+[package]
+name = "discipline-server"
+version = "0.1.0"
+authors = ["Berke Durak <bd@exhrd.fr>"]
+edition = "2021"
+
+[dependencies.anyhow]
+version = "1"
+
+[dependencies.tungstenite]
+version = "0.20"
+
+[dependencies.serde]
+version = "1.0.152"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0.91"
+
+[dependencies.pico-args]
+version = "0.4.2"
+
+[dependencies.discipline-net]
+path = "../net"
