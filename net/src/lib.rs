@@ -29,8 +29,10 @@ pub enum Command {
 #[derive(Debug,Serialize,Deserialize,Clone)]
 pub enum Response {
     Ack,
+    Error(String),
     Authorization {
 	subject:String,
-	until:f64
+	time_remaining:f64,
+	last_ping:Option<f64>
     },
 }

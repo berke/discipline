@@ -1,8 +1,14 @@
+mod valve;
+
 use serde::{
     Deserialize,
     Serialize
 };
 use std::{
+    time::{
+	SystemTime,
+	UNIX_EPOCH
+    },
     fs::File,
     io::{
 	BufReader,
@@ -35,6 +41,7 @@ use anyhow::{
 };
 use rand::Rng;
 use discipline_net::*;
+use valve::Valve;
 
 struct Config {
     state_path:String
@@ -42,10 +49,14 @@ struct Config {
 
 struct Controller {
     config:Config,
-    state:ControllerState
+    state:ControllerState,
+    serial:u64,
+    valve:Valve
 }
 
 impl Controller {
+    const SAVE_INTERVAL : f64 = 1.0;
+    
     pub fn create_state(config:&Config)->Result<()> {
 	let state = ControllerState::new();
 	state.atomic_replace(&config.state_path)?;
@@ -54,13 +65,23 @@ impl Controller {
     
     pub fn new(config:Config)->Result<Self> {
 	let state = ControllerState::load(&config.state_path)?;
-	Ok(Self { config,state })
+	let serial = state.serial();
+	let valve = Valve::new(Self::SAVE_INTERVAL);
+	Ok(Self { config,state,serial,valve })
     }
 
-    pub fn command(&mut self,cmd:Envelope<Command>)->Result<Envelope<Response>> {
+    pub fn command(&mut self,env:Envelope<Command>)->Result<Envelope<Response>> {
+	let payload = self.state.handle(&env)?;
+	if let Some(_) = self.valve.tick() {
+	    let new_serial = self.state.serial();
+	    if new_serial != self.serial {
+		self.serial = new_serial;
+		self.state.atomic_replace(&self.config.state_path)?;
+	    }
+	}
 	Ok(Envelope {
 	    sender:Entity::Controller,
-	    payload:Response::Ack,
+	    payload,
 	    signature:"\\_'')_/".to_string()
 	})
     }
@@ -68,14 +89,66 @@ impl Controller {
 
 #[derive(Clone,Debug,Serialize,Deserialize,)]
 struct SubjectInfo {
-    last_ping:Option<(f64,bool)>,
+    last_ping:Option<f64>,
     authorized_until:Option<f64>
 }
 
 #[derive(Clone,Debug,Serialize,Deserialize,)]
 struct ControllerState {
+    serial:u64,
     administrators:Vec<String>,
     subjects:BTreeMap<String,SubjectInfo>
+}
+
+fn now()->f64 {
+    SystemTime::now()
+	.duration_since(UNIX_EPOCH)
+	.expect("Cannot get timestamp")
+	.as_secs_f64()
+}
+
+impl ControllerState {
+    fn handle(&mut self,
+	      env:&Envelope<Command>)->Result<Response> {
+	let t_now = now();
+	let mut updated = false;
+
+	if let Entity::Subject(subject) = &env.sender {
+	    if let Some(subject_info) =
+		self.subjects.get_mut(subject) {
+		    subject_info.last_ping = Some(t_now);
+		    updated = true;
+		}
+	}
+
+	let resp =
+	    match &env.payload {
+		Command::GetStatus { subject } => {
+		    if let Some(subject_info) =
+			self.subjects.get(subject) {
+			    let time_remaining =
+				subject_info.authorized_until.map(
+				    |t| (t - t_now).max(0.0)
+				).unwrap_or(0.0);
+			    Ok(Response::Authorization {
+				subject:subject.to_string(),
+				last_ping:subject_info.last_ping
+				    .map(|t| t_now - t),
+				time_remaining
+			    })
+			} else {
+			    Ok(Response::Error("Unknown subject".to_string()))
+			}
+		},
+		_ => Err(anyhow!("Not implemented"))
+	    };
+
+	if updated {
+	    self.updated();
+	}
+
+	resp
+    }
 }
 
 pub trait Updateable where Self:Sized {
@@ -84,6 +157,10 @@ pub trait Updateable where Self:Sized {
     fn load<P:AsRef<Path>>(path:P)->Result<Self>;
 
     fn save<P:AsRef<Path>>(&self,path:P)->Result<()>;
+
+    fn updated(&mut self);
+
+    fn serial(&self)->u64;
 
     fn atomic_replace<P:AsRef<Path>>(&self,path:P)->Result<()> {
 	let mut tmp_path : PathBuf = path.as_ref().into();
@@ -105,6 +182,7 @@ fn random_id()->String {
 impl Updateable for ControllerState {
     fn new()->Self {
 	Self {
+	    serial:0,
 	    administrators:Vec::new(),
 	    subjects:BTreeMap::new()
 	}
@@ -120,6 +198,14 @@ impl Updateable for ControllerState {
 	let fd = File::create(path)?;
 	let buf = BufWriter::new(fd);
 	Ok(ron::ser::to_writer(buf,&self)?)
+    }
+
+    fn updated(&mut self) {
+	self.serial += 1;
+    }
+
+    fn serial(&self)->u64 {
+	self.serial
     }
 }
 
