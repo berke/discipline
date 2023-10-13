@@ -121,6 +121,8 @@ impl ControllerState {
 		}
 	}
 
+	let err = |u:&str| Ok(Response::Error(u.to_string()));
+
 	let resp =
 	    match &env.payload {
 		Command::GetStatus { subject } => {
@@ -137,10 +139,28 @@ impl ControllerState {
 				time_remaining
 			    })
 			} else {
-			    Ok(Response::Error("Unknown subject".to_string()))
+			    err("Unknown subject")
 			}
 		},
-		_ => Err(anyhow!("Not implemented"))
+		Command::Authorize { subject,duration } => {
+		    if let Entity::Administrator(adm) = &env.sender {
+			if self.administrators.contains(adm) {
+			    if let Some(subject_info) =
+				self.subjects.get_mut(subject) {
+				    subject_info.authorized_until =
+					duration.map(|t| t_now + t);
+				    updated = true;
+				    Ok(Response::Ack)
+				} else {
+				    err("Unknown subject")
+				}
+			} else {
+			    err("Unknown administrator")
+			}
+		    } else {
+			err("Only administrators can authorize")
+		    }
+		}
 	    };
 
 	if updated {

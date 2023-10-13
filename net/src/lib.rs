@@ -20,10 +20,8 @@ pub struct Envelope<T> {
 #[derive(Debug,Serialize,Deserialize,Clone)]
 pub enum Command {
     Authorize { subject:String,
-		duration:f64 },
-    GetAuthorization { subject:String },
+		duration:Option<f64> },
     GetStatus { subject:String },
-    Cancel { subject:String },
 }
 
 #[derive(Debug,Serialize,Deserialize,Clone)]
