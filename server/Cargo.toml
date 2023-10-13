@@ -20,5 +20,11 @@ version = "1.0.91"
 [dependencies.pico-args]
 version = "0.4.2"
 
+[dependencies.ron]
+version = "0.8"
+
+[dependencies.rand]
+version = "0.7"
+
 [dependencies.discipline-net]
 path = "../net"
