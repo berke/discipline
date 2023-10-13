@@ -139,7 +139,7 @@ impl ControllerState {
 				time_remaining
 			    })
 			} else {
-			    err("Unknown subject")
+			    err(&format!("Unknown subject {:?}",subject))
 			}
 		},
 		Command::Authorize { subject,duration } => {
@@ -152,10 +152,10 @@ impl ControllerState {
 				    updated = true;
 				    Ok(Response::Ack)
 				} else {
-				    err("Unknown subject")
+				    err(&format!("Unknown subject {:?}",subject))
 				}
 			} else {
-			    err("Unknown administrator")
+			    err(&format!("Unknown administrator {:?}",adm))
 			}
 		    } else {
 			err("Only administrators can authorize")
@@ -277,7 +277,10 @@ impl ApiServer {
 	    let stream = stream?;
 	    let ctl = Arc::clone(&self.ctl);
 	    spawn (|| {
-		Self::handle(ctl,stream).unwrap();
+		match Self::handle(ctl,stream) {
+		    Ok(()) => (),
+		    Err(e) => eprintln!("Error: {}",e)
+		}
 	    });
 	}
 	Ok(())

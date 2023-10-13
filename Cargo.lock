@@ -131,6 +131,21 @@ name = "discipline"
 version = "0.1.0"
 
 [[package]]
+name = "discipline-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "discipline-net",
+ "pico-args",
+ "rand 0.7.3",
+ "ron",
+ "serde",
+ "serde_json",
+ "tungstenite",
+ "url",
+]
+
+[[package]]
 name = "discipline-net"
 version = "0.1.0"
 dependencies = [

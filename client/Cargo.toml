@@ -1,0 +1,33 @@
+[package]
+name = "discipline-client"
+version = "0.1.0"
+authors = ["Berke Durak <bd@exhrd.fr>"]
+edition = "2021"
+
+[dependencies.anyhow]
+version = "1"
+
+[dependencies.tungstenite]
+version = "0.20"
+
+[dependencies.serde]
+version = "1.0.152"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0.91"
+
+[dependencies.pico-args]
+version = "0.4.2"
+
+[dependencies.ron]
+version = "0.8"
+
+[dependencies.rand]
+version = "0.7"
+
+[dependencies.url]
+version = "2.1.0"
+
+[dependencies.discipline-net]
+path = "../net"
