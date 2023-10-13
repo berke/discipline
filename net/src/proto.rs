@@ -1,3 +1,4 @@
+use std::net::SocketAddrV4;
 use serde::{Serialize,Deserialize};
 use nix::sys::socket as nss;
 
@@ -12,7 +13,7 @@ pub struct ChannelId {
     id:String
 }
 
-#[derive(Debug,Serialize,Deserialize)]
+#[derive(Debug,Serialize,Deserialize,Clone)]
 pub struct Message {
     pub source:String,
     pub timestamp:f64,
@@ -39,5 +40,20 @@ impl From<nss::SockaddrIn> for SubscriberId {
 	    addr:a.ip(),
 	    port:a.port()
 	}
+    }
+}
+
+impl Into<SocketAddrV4> for SubscriberId {
+    fn into(self)->SocketAddrV4 {
+	SocketAddrV4::new(
+	    self.addr.into(),
+	    self.port)
+    }
+}
+
+impl Into<nss::SockaddrIn> for SubscriberId {
+    fn into(self)->nss::SockaddrIn {
+	let s : SocketAddrV4 = self.into();
+	s.into()
     }
 }

@@ -43,9 +43,15 @@ impl Subscriber {
     }
 }
 
+const BUF_SIZE : usize = 4096;
+
 struct Switchboard {
+    sock_fd:OwnedFd,
+    xfo:BlockTransform,
     subscribers:BTreeMap<SubscriberId,Subscriber>,
-    channels:BTreeMap<ChannelId,Channel>
+    channels:BTreeMap<ChannelId,Channel>,
+    buf:[u8;BUF_SIZE],
+    buf2:[u8;BUF_SIZE]
 }
 
 struct Channel {
@@ -80,11 +86,24 @@ fn timestamp()->f64 {
 }
 
 impl Switchboard {
-    pub fn new()->Self {
-	Self {
+    pub fn new(addr:SocketAddrV4)->Res<Self> {
+	let sock_fd : OwnedFd = nss::socket(nss::AddressFamily::Inet,
+					    nss::SockType::Datagram,
+					    nss::SockFlag::empty(),
+					    nss::SockProtocol::Udp)?;
+	nss::setsockopt(&sock_fd,nss::sockopt::ReuseAddr,&true)?;
+	let addr_in : nss::SockaddrIn = addr.into();
+	nss::bind(sock_fd.as_raw_fd(),&addr_in)?;
+	let xfo = BlockTransform::new([0x12931133,0x94813456,
+					   0x19293456,0x9911aacc]);
+	Ok(Self {
+	    sock_fd,
+	    xfo,
 	    subscribers:BTreeMap::new(),
 	    channels:BTreeMap::new(),
-	}
+	    buf:[0;BUF_SIZE],
+	    buf2:[0;BUF_SIZE]
+	})
     }
 
     pub fn unsubscribe(&mut self,channel:&ChannelId,
@@ -116,9 +135,7 @@ impl Switchboard {
 
     pub fn process(&mut self,
 		   subscriber:SubscriberId,
-		   buf:&[u8])->Res<()> {
-	let ctrl : Control = rmp_serde::decode::from_slice(&buf)?;
-	
+		   ctrl:Control)->Res<()> {
 	match ctrl {
 	    Control::Subscriptions{ channels } => {
 		let existing = self.subscriber_mut(&subscriber).channels.clone();
@@ -130,11 +147,42 @@ impl Switchboard {
 		}
 	    },
 	    Control::Transmit { channel,message } => {
+		let fd = self.sock_fd.as_raw_fd();
 		let mut chan = self.channel_mut(&channel);
-		chan.add(message);
+		chan.add(message.clone());
+		for sub in chan.subscribers.iter() {
+		    let addr : nss::SockaddrIn = (*sub).into();
+		    nss::sendto(
+			fd,
+			&message.contents,
+			&addr,
+			nss::MsgFlags::empty())?;
+		}
 	    },
 	    Control::Error { msg } => {
 		eprintln!("Error from {:?}: {:?}",subscriber,msg);
+	    }
+	}
+	Ok(())
+    }
+
+    pub fn run(&mut self)->Res<()> {
+	let (m,ao) = nss::recvfrom::<nss::SockaddrIn>(self.sock_fd.as_raw_fd(),&mut self.buf)?;
+	match ao {
+	    None => println!("No address!"),
+	    Some(a) => {
+		let ca : SubscriberId = a.into();
+		match self.xfo.decode(&self.buf[0..m],
+				      &mut self.buf2) {
+		    Some(m2) => {
+			let ctrl : Control = rmp_serde::decode::from_slice(&self.buf2[0..m2])?;
+			self.process(ca,ctrl)?;
+		    },
+		    None => {
+			eprintln!("Transformation error");
+			hex_dump(&self.buf[0..m]);
+		    }
+		}
 	    }
 	}
 	Ok(())
@@ -144,51 +192,18 @@ impl Switchboard {
 fn main()->Res<()> {
     let mut args = Arguments::from_env();
 
-    let src_addr : SocketAddrV4 = args.value_from_str("--addr")?;
-    let sock_fd : OwnedFd = nss::socket(nss::AddressFamily::Inet,
-			   nss::SockType::Datagram,
-			   nss::SockFlag::empty(),
-			   nss::SockProtocol::Udp)?;
-    let sock_fd_raw = sock_fd.as_raw_fd();
-    nss::setsockopt(&sock_fd,nss::sockopt::ReuseAddr,&true)?;
-    let src_addr_in : nss::SockaddrIn = src_addr.into();
-    nss::bind(sock_fd_raw,&src_addr_in)?;
+    let addr : SocketAddrV4 = args.value_from_str("--addr")?;
 
-    let mut xfo = BlockTransform::new([0x12931133,0x94813456,0x19293456,0x9911aacc]);
+    let mut switchboard = Switchboard::new(addr)?;
 
-    let mut switchboard = Switchboard::new();
-
-    let mut buf = [0_u8;4096];
-    let mut buf2 = [0_u8;4096];
     loop {
-	match nss::recvfrom::<nss::SockaddrIn>(sock_fd_raw,&mut buf) {
+	match switchboard.run() {
+	    Ok(()) => (),
 	    Err(e) => {
-		println!("Error receiving: {:?}",e);
-		break;
-	    },
-	    Ok((m,ao)) => {
-		match ao {
-		    None => println!("No address!"),
-		    Some(a) => {
-			let ca : SubscriberId = a.into();
-			match xfo.decode(&buf[0..m],&mut buf2) {
-			    Some(m2) => {
-				match switchboard.process(ca,&buf2[0..m2]) {
-				    Ok(()) => (),
-				    Err(e) => {
-					eprintln!("Switchboard error: {}",e);
-				    }
-				}
-			    },
-			    None => {
-				eprintln!("Transformation error");
-				hex_dump(&buf[0..m]);
-			    }
-			}
-		    }
-		}
+		eprintln!("ERROR: {}",e);
 	    }
 	}
     }
+
     Ok(())
 }
