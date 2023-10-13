@@ -1,33 +1,4 @@
-use serde::{
-    Deserialize,
-    Serialize
-};
 use url::Url;
-use std::{
-    time::{
-	SystemTime,
-	UNIX_EPOCH
-    },
-    fs::File,
-    io::{
-	BufReader,
-	BufWriter
-    },
-    path::{
-	Path,
-	PathBuf
-    },
-    collections::BTreeMap,
-    sync::{
-	Arc,
-	Mutex
-    },
-    net::{
-	TcpListener,
-	TcpStream
-    },
-    thread::spawn
-};
 use tungstenite::{
     connect,
     Message
@@ -38,7 +9,6 @@ use anyhow::{
     bail,
     Result
 };
-use rand::Rng;
 use discipline_net::*;
 
 fn main()->Result<()> {
@@ -84,7 +54,7 @@ fn main()->Result<()> {
     }
 
     let process = move ||->Result<()> {
-	let (mut socket,response) = connect(url.clone())?;
+	let (mut socket,_response) = connect(url.clone())?;
 	// eprintln!("Response: {:#?}",response);
 
 	let mut transact = |payload:Command|->Result<Envelope<Response>> {
@@ -123,9 +93,9 @@ fn main()->Result<()> {
 		let env = transact(Command::GetStatus { subject })?;
 		match &env.payload {
 		    Response::Authorization {
-			subject,
+			subject:_,
 			time_remaining,
-			last_ping
+			last_ping:_
 		    } => {
 			if show_time_remaining {
 			    println!("{}",time_remaining.round() as isize);
