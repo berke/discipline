@@ -19,14 +19,36 @@ use anyhow::{
     Result
 };
 
-#[derive(Debug,Serialize,Deserialize,Clone,Copy)]
-enum Command {
-    Query
+#[derive(Debug,Serialize,Deserialize,Clone)]
+enum Entity {
+    Controller,
+    Administrator(String),
+    Subject(String)
 }
 
-#[derive(Debug,Serialize,Deserialize,Clone,Copy)]
+#[derive(Debug,Serialize,Deserialize,Clone)]
+struct Envelope<T> {
+    sender:Entity,
+    payload:T,
+    signature:String
+}
+
+#[derive(Debug,Serialize,Deserialize,Clone)]
+enum Command {
+    Authorize { subject:String,
+		duration:f64 },
+    GetAuthorization { subject:String },
+    GetStatus { subject:String },
+    Cancel { subject:String },
+}
+
+#[derive(Debug,Serialize,Deserialize,Clone)]
 enum Response {
-    Authorization
+    Ack,
+    Authorization {
+	subject:String,
+	until:f64
+    },
 }
 
 struct Config {
@@ -41,8 +63,12 @@ impl Controller {
 	Ok(Self { config })
     }
 
-    pub fn command(&mut self,cmd:Command)->Result<Response> {
-	Ok(Response::Authorization)
+    pub fn command(&mut self,cmd:Envelope<Command>)->Result<Envelope<Response>> {
+	Ok(Envelope {
+	    sender:Entity::Controller,
+	    payload:Response::Ack,
+	    signature:"\\_'')_/".to_string()
+	})
     }
 }
 
@@ -62,13 +88,11 @@ impl ApiServer {
     }
 
     fn handle_message(ctl:&Arc<Mutex<Controller>>,
-		      msg:&Message)->Result<Response> {
+		      msg:&Message)->Result<Envelope<Response>> {
 	match msg {
 	    Message::Text(u) => {
-		let msg = serde_json::from_str(&u)
+		let cmd : Envelope<Command> = serde_json::from_str(&u)
 		    .map_err(|e| anyhow!("Invalid JSON: {}",e))?;
-		let cmd = Command::from(msg);
-		println!("Command received: {:?}",cmd);
 		ctl.lock().unwrap().command(cmd)
 	    },
 	    _ => bail!("Invalid message type")
