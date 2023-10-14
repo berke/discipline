@@ -171,9 +171,14 @@ dependencies = [
 name = "discipline-ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "discipline-net",
  "gtk4",
  "ron",
  "serde",
+ "serde_json",
+ "tungstenite",
+ "url",
 ]
 
 [[package]]
