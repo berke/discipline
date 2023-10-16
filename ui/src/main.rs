@@ -17,11 +17,7 @@ use futures_util::{
 
 use tokio::{
     runtime::{
-	Builder,
-	Runtime
-    },
-    task::{
-	JoinHandle
+	Builder
     },
     sync::mpsc::{
 	self,
@@ -58,20 +54,7 @@ use gtk::{
 };
 
 use std::{
-    thread::{
-	self,
-    },
-    collections::VecDeque,
-    time::Duration,
-    net::TcpStream,
-    fmt::{
-	Display,
-	Write
-    },
-    sync::{
-	Arc,
-	Mutex,
-    }
+    fmt::Display
 };
 
 use discipline_net::*;
@@ -351,7 +334,7 @@ fn main()->glib::ExitCode {
 	glib::source::timeout_add_local(
 	    std::time::Duration::from_secs_f64(1.0 / FPS as f64),
 	    {
-		let messages_window = messages_window.clone();
+		let _messages_window = messages_window.clone();
 		let message_buf = message_buf.clone();
 		move || {
 		    match receive_resp.yank_mut().try_recv() {

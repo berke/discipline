@@ -1,11 +1,7 @@
 use std::{
-    borrow::{
-	Borrow,
-	BorrowMut
-    },
+    borrow::Borrow,
     rc::Rc,
     cell::{
-	Cell,
 	RefCell,
 	Ref,
 	RefMut
