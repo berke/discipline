@@ -77,7 +77,6 @@ find_alert_index() {
 	    alert_index=$i
 	fi
     done
-    msg "Alert index for $1 is $alert_index"
 }
 
 last_alert_index=0
@@ -104,7 +103,6 @@ $CLIENT --url $URL \
     if is_logged_in ; then
 	find_alert_index $T
 
-	msg "$alert_index $last_alert_index al"
 	if (( alert_index != last_alert_index )) ; then
 	    if (( alert_index > last_alert_index )) ; then
 		alert $alert_index
