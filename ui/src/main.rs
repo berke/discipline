@@ -24,10 +24,11 @@ use tokio::{
 	JoinHandle
     },
     sync::mpsc::{
-	    self,
-	    Receiver,
-	    Sender,
-	}
+	self,
+	Receiver,
+	Sender,
+	error::TryRecvError,
+    }
 };
 use tokio_tungstenite::{
     self as tt,
@@ -48,7 +49,12 @@ use gtk::{
     Frame,
     InputPurpose,
     Label,
-    Orientation
+    Orientation,
+    PolicyType,
+    ScrolledWindow,
+    ScrollablePolicy,
+    TextBuffer,
+    TextView
 };
 
 use std::{
@@ -58,6 +64,10 @@ use std::{
     collections::VecDeque,
     time::Duration,
     net::TcpStream,
+    fmt::{
+	Display,
+	Write
+    },
     sync::{
 	Arc,
 	Mutex,
@@ -116,7 +126,6 @@ impl BackendConnection {
 
 	std::thread::spawn(move || {
 	    runtime.block_on(async move {
-		println!("Spawning...");
 		let mut this = Self {
 		    config,
 		    recv:receiver1,
@@ -125,64 +134,16 @@ impl BackendConnection {
 		let _ = this.run().await;
 	    })
 	});
-	    
-	// let jh = thread::Builder::new()
-	//     .spawn(move || {
-	// 	loop {
-	// 	    match this.run() {
-	// 		Ok(()) => (),
-	// 		Err(e) => eprintln!("Backend thread exited abnormally: {}",e)
-	// 	    }
-	// 	    std::thread::sleep(
-	// 		std::time::Duration::from_secs_f64(
-	// 		    this.config.retry_delay));
-	// 	}
-	//     })?;
 	Ok((sender1,receiver2))
     }
 
-    // fn reader<Req:IntoClientRequest>(
-    // 	mut socket:WebSocket<MaybeTlsStream<TcpStream>>,
-    // 	send:Sender<Response>)->Result<()> {
-    // 	loop {
-    // 	    let msg = socket.read()?;
-    // 	    match msg {
-    // 		Message::Text(u) => {
-    // 		    let resp : Result<Envelope<Response>,String> = serde_json::from_str(&u)
-    // 			.map_err(|e| anyhow!("Invalid JSON: {}",e))?;
-    // 		    match resp {
-    // 			Ok(env) => {
-    // 			    send.send(env.payload)?;
-    // 			},
-    // 			Err(e) => bail!("Error: {}",e)
-    // 		    }
-    // 		},
-    // 		_ => bail!("Invalid message type")
-    // 	    }
-    // 	}
-    // }
-
     async fn run(&mut self)->Result<()> {
 	let url = Url::parse(&self.config.server_url)?;
-	println!("Connecting...");
 	let (mut socket,_response) = tt::connect_async(url).await?;
-	println!("Connected");
-
-	// // let jh = thread::Builder::new()
-	// //     .spawn({
-	// // 	move || {
-	// // 	    Self::reader(socket.clone(),
-	// // 			 self.send)
-	// // 		.expect("Reader failed")
-	// // 	}
-	// //     })?;
 
 	loop {
-	    println!("Awaiting receive...");
-
 	    let _ = tokio::select! {
 		Some(payload) = self.recv.recv() => {
-		    println!("<<< Payload {:?}",payload);
 		    let sender = Entity::Administrator(self.config.name.clone());
 		    let cmd = Envelope {
 			sender,
@@ -193,7 +154,6 @@ impl BackendConnection {
 		    socket.send(Message::Text(v)).await?;
 		},
 		Some(msg) = socket.next() => {
-		    println!("<<< Msg {:?}",msg);
 		    match msg? {
 			Message::Text(u) => {
 			    let resp : Result<Envelope<Response>,String> =
@@ -201,9 +161,7 @@ impl BackendConnection {
 				.map_err(|e| anyhow!("Invalid JSON: {}",e))?;
 			    match resp {
 				Ok(env) => {
-				    println!("OK {:?}",env.payload);
-				    let res = self.send.send(env.payload).await;
-				    println!("  --> {:?}",res);
+				    let _ = self.send.send(env.payload).await;
 				},
 				Err(e) => bail!("Error: {}",e)
 			    }
@@ -213,6 +171,32 @@ impl BackendConnection {
 		}
 	    };
 	}
+    }
+}
+
+fn authorize(message_buf:TextBuffer,
+	     send_cmd:Ptr<Sender<Command>>,
+	     kid:String,t:f64) {
+    message_buf.append(
+	&format!("Authorize {} for {}",kid,
+		 Seconds::make(t)));
+
+    let cmd = 
+	Command::Authorize { subject:kid.clone(),
+			     duration:Some(t) };
+    send_cmd.yank_mut().blocking_send(cmd)
+	.expect("Cannot send");
+}
+
+trait TextBufferAppend {
+    fn append(&self,u:&str);
+}
+
+impl TextBufferAppend for TextBuffer {
+    fn append(&self,u:&str) {
+	let mut end = self.end_iter();
+	self.insert(&mut end,u);
+	self.insert(&mut end,"\n");
     }
 }
     
@@ -239,6 +223,8 @@ fn main()->glib::ExitCode {
 	    .title("Discipline")
 	    .build();
 
+	let message_buf = TextBuffer::builder()
+	    .build();
 	let box1 = Box::new(Orientation::Vertical,8);
 	for kid in config.kids.iter() {
 	    let frame = Frame::builder()
@@ -254,45 +240,148 @@ fn main()->glib::ExitCode {
 	    let authorize_1h = Button::with_label("1h");
 	    box2.append(&authorize_1h);
 
-	    authorize_1h.connect_clicked({
-		let send_cmd = send_cmd.refer();
-		let kid = kid.clone();
-		move |_| {
-		    println!("Authorize {} for 1h",kid);
-
-		    let cmd = 
-			Command::Authorize { subject:kid.clone(),
-					     duration:Some(3600.0) };
-		    send_cmd.yank_mut().blocking_send(cmd).expect("Cannot send");
-		}
-	    });
-
 	    let duration_h = Entry::builder()
 		.input_purpose(InputPurpose::Number)
 		.build();
 	    box2.append(&duration_h);
-	    let authorize_30min = Button::with_label(" hours");
-	    box2.append(&authorize_30min);
+	    let authorize_hours = Button::with_label(" hours");
+	    box2.append(&authorize_hours);
 	    
 	    let cancel = Button::with_label("Cancel");
 	    box2.append(&cancel);
 
+	    let get_status = Button::with_label("Get status");
+	    box2.append(&get_status);
+	    get_status.connect_clicked({
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    let cmd = Command::GetStatus { subject:kid.clone() };
+		    send_cmd.yank_mut().blocking_send(cmd)
+			.expect("Cannot send");
+		}
+	    });
+
 	    frame.set_child(Some(&box2));
 	    box1.append(&frame);
+
+	    authorize_hours.connect_clicked({
+		let duration_h = duration_h.clone();
+		let message_buf = message_buf.clone();
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    let duration_h_text = duration_h.text();
+		    if let Ok(d) = duration_h_text.parse::<f64>() {
+			authorize(message_buf.clone(),
+				  send_cmd.refer(),
+				  kid.clone(),
+				  d*3600.0);
+		    } else {
+			message_buf.append("Invalid number");
+		    }
+		}
+	    });
+
+	    authorize_1h.connect_clicked({
+		let message_buf = message_buf.clone();
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    authorize(message_buf.clone(),
+			      send_cmd.refer(),
+			      kid.clone(),
+			      3600.0);
+		}
+	    });
+
+	    authorize_30min.connect_clicked({
+		let message_buf = message_buf.clone();
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    authorize(message_buf.clone(),
+			      send_cmd.refer(),
+			      kid.clone(),
+			      1800.0);
+		}
+	    });
+
+	    cancel.connect_clicked({
+		let message_buf = message_buf.clone();
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    authorize(message_buf.clone(),
+			      send_cmd.refer(),
+			      kid.clone(),
+			      0.0);
+		}
+	    });
+
 	}
+
+	let messages_window = ScrolledWindow::builder()
+	    .hexpand(true)
+	    .vexpand(true)
+	    .vscrollbar_policy(PolicyType::Always)
+	    .build();
+	
+	let messages = TextView::builder()
+	    .editable(false)
+	    .hexpand(true)
+	    .buffer(&message_buf)
+	    .vexpand(false)
+	    .vscroll_policy(ScrollablePolicy::Natural)
+	    .build();
+
+	message_buf.connect_changed({
+	    let messages_window = messages_window.clone();
+	    move |_| {
+		let adj = messages_window.vadjustment();
+		adj.set_value(adj.upper() - adj.page_size());
+	    }
+	});
+	messages_window.set_child(Some(&messages));
+	box1.append(&messages_window);
+	
 	window.set_child(Some(&box1));
 
-	const FPS: u32 = 3;
+	const FPS: u32 = 30;
 	glib::source::timeout_add_local(
 	    std::time::Duration::from_secs_f64(1.0 / FPS as f64),
 	    {
-		// let glarea = glarea.clone();
+		let messages_window = messages_window.clone();
+		let message_buf = message_buf.clone();
 		move || {
 		    match receive_resp.yank_mut().try_recv() {
 			Ok(resp) => {
-			    println!("Resp {:#?}",resp);
+			    match resp {
+				Response::Authorization {
+				    subject,
+				    time_remaining,
+				    last_ping:_
+				} => {
+				    message_buf.append(
+					&format!(
+					    "Subject {} time remaining {}",
+					    subject,
+					    Seconds::make(time_remaining))
+				    );
+				},
+				Response::Ack => {
+				    message_buf.append("Server: Acknowledged");
+				},
+				Response::Error(e) => {
+				    message_buf.append(
+					&format!("Server: Error {}",e));
+				}
+			    }
 			},
-			Err(_) => ()
+			Err(TryRecvError::Empty) => (),
+			Err(TryRecvError::Disconnected) => {
+			    println!("Disconnected!?");
+			}
 		    }
 		    true.into()
 		}
@@ -302,4 +391,43 @@ fn main()->glib::ExitCode {
     });
 
     app.run()
+}
+
+struct Seconds(f64);
+
+impl Seconds {
+    fn make(t:f64)->Self { Self(t) }
+}
+
+impl Display for Seconds {
+    fn fmt(&self,o:&mut std::fmt::Formatter<'_>)->Result<(),std::fmt::Error> {
+	let t = self.0;
+	if t < 0.1 {
+	    write!(o,"zero")
+	} else {
+	    if t < 60.0 {
+		let sec = t.round() as isize;
+		write!(o,"{} second{}",
+		       sec,
+		       if sec == 1 { "" } else { "s" })
+	    } else if t < 3600.0 {
+		let min = (t/60.0).round() as isize;
+		write!(o,"{} minute{}",
+		       min,
+		       if min == 1 { "" } else { "s" })
+	    } else {
+		let hour = (t/3600.0).round() as isize;
+		let min = ((t - 3600.0*(hour as f64))/60.0).round() as isize;
+		write!(o,"{} hour{}",
+		       hour,
+		       if hour == 1 { "" } else { "s" })?;
+		if min > 0 {
+		    write!(o," {} minute{}",
+			   min,
+			   if min == 1 { "" } else { "s" })?;
+		}
+		Ok(())
+	    }
+	}
+    }
 }
