@@ -12,7 +12,7 @@ use std::{
     }
 };
 
-type Ptr<T> = Rc<RefCell<T>>;
+pub type Ptr<T> = Rc<RefCell<T>>;
 
 pub trait Make {
     type T;
@@ -24,17 +24,21 @@ pub trait Make {
 
 impl<T> Make for Ptr<T> {
     type T = T;
+
     fn make(x:Self::T)->Self {
 	Rc::new(RefCell::new(x))
     }
+
     fn refer(&self)->Self {
 	Rc::clone(self)
     }
+
     fn yank(&self)->Ref<Self::T> {
 	let w0 : &RefCell<Self::T> = self.borrow();
 	let w1 : Ref<Self::T> = w0.borrow();
 	w1
     }
+
     fn yank_mut(&self)->RefMut<Self::T> {
 	let w0 : &RefCell<Self::T> = self.borrow();
 	let w1 : RefMut<Self::T> = w0.borrow_mut();
@@ -54,11 +58,13 @@ pub trait Settable {
 
 pub trait Updatable {
     type T;
+
     fn update<F:Fn(Self::T)->Self::T>(&self,f:F);
 }
 
 impl<T> Updatable for Ptr<T> where T:Copy {
     type T = T;
+
     fn update<F:Fn(Self::T)->Self::T>(&self,f:F) {
 	let mut w = self.yank_mut();
 	*w = f(*w);
@@ -67,6 +73,7 @@ impl<T> Updatable for Ptr<T> where T:Copy {
 
 impl<T> Gettable for Ptr<T> where T:Copy {
     type T = T;
+
     fn get(&self)->Self::T {
 	*self.yank()
     }
@@ -74,6 +81,7 @@ impl<T> Gettable for Ptr<T> where T:Copy {
 
 impl<T> Settable for Ptr<T> where T:Copy {
     type T = T;
+
     fn set(&self,x:T) {
 	*self.yank_mut() = x;
     }
