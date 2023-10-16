@@ -16,8 +16,15 @@ version = "^0.8"
 [dependencies.anyhow]
 version = "1"
 
-[dependencies.tungstenite]
-version = "0.20"
+[dependencies.tokio-tungstenite]
+version = "*"
+
+[dependencies.tokio]
+version = "*"
+features = ["full"]
+
+[dependencies.futures-util]
+version = "0.3"
 
 [dependencies.serde_json]
 version = "1.0.91"

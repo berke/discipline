@@ -9,15 +9,31 @@ use anyhow::{
 };
 
 use url::Url;
-use tungstenite::{
-    connect,
-    stream::{
-	MaybeTlsStream
-    },
-    client::IntoClientRequest,
-    WebSocket,
-    Message
+
+use futures_util::{
+    SinkExt,
+    StreamExt
 };
+
+use tokio::{
+    runtime::{
+	Builder,
+	Runtime
+    },
+    task::{
+	JoinHandle
+    },
+    sync::mpsc::{
+	    self,
+	    Receiver,
+	    Sender,
+	}
+};
+use tokio_tungstenite::{
+    self as tt,
+    tungstenite
+};
+use tungstenite::Message;
 
 use gtk4 as gtk;
 
@@ -38,7 +54,6 @@ use gtk::{
 use std::{
     thread::{
 	self,
-	JoinHandle
     },
     collections::VecDeque,
     time::Duration,
@@ -46,12 +61,6 @@ use std::{
     sync::{
 	Arc,
 	Mutex,
-	mpsc::{
-	    self,
-	    Receiver,
-	    Sender,
-	    TryRecvError
-	}
     }
 };
 
@@ -93,77 +102,117 @@ struct BackendConnection {
 }
 
 impl BackendConnection {
-    pub fn new(config:Config)->Result<(JoinHandle<()>,Sender<Command>,
+    pub fn new(config:Config)->Result<(Sender<Command>,
 				       Receiver<Response>)> {
-	let (sender1,receiver1) = mpsc::channel();
-	let (sender2,receiver2) = mpsc::channel();
+	const BUF_SIZE : usize = 8;
 
-	let mut this = Self { config,
-			      recv:receiver1,
-			      send:sender2 };
-	
-	let jh = thread::Builder::new()
-	    .spawn(move || {
-		loop {
-		    match this.run() {
-			Ok(()) => (),
-			Err(e) => eprintln!("Backend thread exited abnormally: {}",e)
-		    }
-		    std::thread::sleep(
-			std::time::Duration::from_secs_f64(
-			    this.config.retry_delay));
-		}
-	    })?;
-	Ok((jh,sender1,receiver2))
-    }
+	let runtime = Builder::new_current_thread()
+	    .enable_all()
+	    .build()
+	    .expect("Cannot build Tokio runtime");
 
-    fn reader<Req:IntoClientRequest>(
-	mut socket:WebSocket<MaybeTlsStream<TcpStream>>,
-	send:Sender<Response>)->Result<()> {
-	loop {
-	    let msg = socket.read()?;
-	    match msg {
-		Message::Text(u) => {
-		    let resp : Result<Envelope<Response>,String> = serde_json::from_str(&u)
-			.map_err(|e| anyhow!("Invalid JSON: {}",e))?;
-		    match resp {
-			Ok(env) => {
-			    send.send(env.payload)?;
-			},
-			Err(e) => bail!("Error: {}",e)
-		    }
-		},
-		_ => bail!("Invalid message type")
-	    }
-	}
-    }
+	let (sender1,receiver1) = mpsc::channel(BUF_SIZE);
+	let (sender2,receiver2) = mpsc::channel(BUF_SIZE);
 
-    fn run(&mut self)->Result<()> {
-	let url = Url::parse(&self.config.server_url)?;
-	let (mut socket,_response) = connect(url)?;
-
+	std::thread::spawn(move || {
+	    runtime.block_on(async move {
+		println!("Spawning...");
+		let mut this = Self {
+		    config,
+		    recv:receiver1,
+		    send:sender2
+		};
+		let _ = this.run().await;
+	    })
+	});
+	    
 	// let jh = thread::Builder::new()
-	//     .spawn({
-	// 	move || {
-	// 	    Self::reader(socket.clone(),
-	// 			 self.send)
-	// 		.expect("Reader failed")
+	//     .spawn(move || {
+	// 	loop {
+	// 	    match this.run() {
+	// 		Ok(()) => (),
+	// 		Err(e) => eprintln!("Backend thread exited abnormally: {}",e)
+	// 	    }
+	// 	    std::thread::sleep(
+	// 		std::time::Duration::from_secs_f64(
+	// 		    this.config.retry_delay));
 	// 	}
 	//     })?;
+	Ok((sender1,receiver2))
+    }
+
+    // fn reader<Req:IntoClientRequest>(
+    // 	mut socket:WebSocket<MaybeTlsStream<TcpStream>>,
+    // 	send:Sender<Response>)->Result<()> {
+    // 	loop {
+    // 	    let msg = socket.read()?;
+    // 	    match msg {
+    // 		Message::Text(u) => {
+    // 		    let resp : Result<Envelope<Response>,String> = serde_json::from_str(&u)
+    // 			.map_err(|e| anyhow!("Invalid JSON: {}",e))?;
+    // 		    match resp {
+    // 			Ok(env) => {
+    // 			    send.send(env.payload)?;
+    // 			},
+    // 			Err(e) => bail!("Error: {}",e)
+    // 		    }
+    // 		},
+    // 		_ => bail!("Invalid message type")
+    // 	    }
+    // 	}
+    // }
+
+    async fn run(&mut self)->Result<()> {
+	let url = Url::parse(&self.config.server_url)?;
+	println!("Connecting...");
+	let (mut socket,_response) = tt::connect_async(url).await?;
+	println!("Connected");
+
+	// // let jh = thread::Builder::new()
+	// //     .spawn({
+	// // 	move || {
+	// // 	    Self::reader(socket.clone(),
+	// // 			 self.send)
+	// // 		.expect("Reader failed")
+	// // 	}
+	// //     })?;
 
 	loop {
-	    let payload = self.recv.recv()?;
-	    println!("<<< Payload {:?}",payload);
-	    let sender = Entity::Administrator(self.config.name.clone());
-	    let cmd = Envelope {
-		sender,
-		signature:"\\_'')_/".to_string(),
-		payload
+	    println!("Awaiting receive...");
+
+	    let _ = tokio::select! {
+		Some(payload) = self.recv.recv() => {
+		    println!("<<< Payload {:?}",payload);
+		    let sender = Entity::Administrator(self.config.name.clone());
+		    let cmd = Envelope {
+			sender,
+			signature:"\\_'')_/".to_string(),
+			payload
+		    };
+		    let v = serde_json::to_string(&cmd)?;
+		    socket.send(Message::Text(v)).await?;
+		},
+		Some(msg) = socket.next() => {
+		    println!("<<< Msg {:?}",msg);
+		    match msg? {
+			Message::Text(u) => {
+			    let resp : Result<Envelope<Response>,String> =
+				serde_json::from_str(&u)
+				.map_err(|e| anyhow!("Invalid JSON: {}",e))?;
+			    match resp {
+				Ok(env) => {
+				    println!("OK {:?}",env.payload);
+				    let res = self.send.send(env.payload).await;
+				    println!("  --> {:?}",res);
+				},
+				Err(e) => bail!("Error: {}",e)
+			    }
+			},
+			_ => bail!("Invalid message type")
+		    }
+		}
 	    };
-	    let v = serde_json::to_string(&cmd)?;
-	    socket.send(Message::Text(v))?;
 	}
-	Ok(())
     }
 }
     
@@ -176,7 +225,8 @@ fn main()->glib::ExitCode {
 	let config = Config::open(CONFIG_PATH)
 	    .expect("Cannot open configuration file");
 
-	let (jh,send_cmd,receive_resp) = BackendConnection::new(config.clone())
+	let (send_cmd,receive_resp) =
+	    BackendConnection::new(config.clone())
 	    .expect("Cannot start backend connection");
 
 	let send_cmd = Ptr::make(send_cmd);
@@ -213,7 +263,7 @@ fn main()->glib::ExitCode {
 		    let cmd = 
 			Command::Authorize { subject:kid.clone(),
 					     duration:Some(3600.0) };
-		    send_cmd.yank_mut().send(cmd).expect("Cannot send");
+		    send_cmd.yank_mut().blocking_send(cmd).expect("Cannot send");
 		}
 	    });
 
@@ -231,6 +281,23 @@ fn main()->glib::ExitCode {
 	    box1.append(&frame);
 	}
 	window.set_child(Some(&box1));
+
+	const FPS: u32 = 3;
+	glib::source::timeout_add_local(
+	    std::time::Duration::from_secs_f64(1.0 / FPS as f64),
+	    {
+		// let glarea = glarea.clone();
+		move || {
+		    match receive_resp.yank_mut().try_recv() {
+			Ok(resp) => {
+			    println!("Resp {:#?}",resp);
+			},
+			Err(_) => ()
+		    }
+		    true.into()
+		}
+	    });
+
 	window.present();
     });
 
