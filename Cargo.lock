@@ -220,6 +220,7 @@ dependencies = [
  "discipline-net",
  "futures-util",
  "gtk4",
+ "pico-args",
  "ron",
  "serde",
  "serde_json",

@@ -59,6 +59,8 @@ use std::{
 
 use discipline_net::*;
 
+use pico_args::Arguments;
+
 const APP_ID : &str = "fr.exhrd.Discipline";
 
 mod config {
@@ -114,7 +116,11 @@ impl BackendConnection {
 		    recv:receiver1,
 		    send:sender2
 		};
-		let _ = this.run().await;
+		loop {
+		    let _ = this.run().await;
+		    tokio::time::sleep(std::time::Duration::from_secs_f64(
+			this.config.retry_delay)).await;
+		}
 	    })
 	});
 	Ok((sender1,receiver2))
@@ -184,12 +190,31 @@ impl TextBufferAppend for TextBuffer {
 }
     
 fn main()->glib::ExitCode {
+    let progname : String = std::env::args().nth(0).unwrap();
+    
+    let mut args = Arguments::from_env();
+
+    if args.contains("-h") || args.contains("--help") {
+	eprintln!("Usage: {} [--config PATH]",
+		  progname);
+	return glib::ExitCode::SUCCESS;
+    }
+
+    let config_path : String = args.opt_value_from_str("--config-path")
+	.expect("Cannot parse arguments")
+	.unwrap_or(CONFIG_PATH.to_string());
+
+    let rest = args.finish();
+    if !rest.is_empty() {
+	panic!("Invalid arguments: {:?}",rest);
+    }
+
     let app = Application::builder()
 	.application_id(APP_ID)
 	.build();
 
-    app.connect_activate(|app| {
-	let config = Config::open(CONFIG_PATH)
+    app.connect_activate(move |app| {
+	let config = Config::open(&config_path)
 	    .expect("Cannot open configuration file");
 
 	let (send_cmd,receive_resp) =
@@ -373,7 +398,7 @@ fn main()->glib::ExitCode {
 	window.present();
     });
 
-    app.run()
+    app.run_with_args(&[&progname])
 }
 
 struct Seconds(f64);

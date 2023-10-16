@@ -32,5 +32,8 @@ version = "1.0.91"
 [dependencies.url]
 version = "2.1.0"
 
+[dependencies.pico-args]
+version = "0.4.2"
+
 [dependencies.discipline-net]
 path = "../net"
