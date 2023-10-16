@@ -30,8 +30,8 @@ kick() {
 	    jq '.[] | select(.user == "'"$KID_USER"'").session' |
 	    tr -d '"' |
 	    while read sess ; do
-		msg "Kicking $KID_USER"
-		loginctl terminate-session $sess
+		msg "Kicking $KID_USER from session '$sess'"
+		loginctl terminate-session $sess || true
 	    done
     fi
 }
@@ -40,7 +40,7 @@ alert() {
     if [ $DRY_RUN = 1 ]; then
 	msg "Would be sounding alert"
     else
-	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay ${ALERT:a}"
+	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay ${ALERT:a}" || true
     fi
 }
 
