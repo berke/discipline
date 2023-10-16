@@ -21,6 +21,14 @@ fi
 
 t_alert_last=0
 
+is_logged_in() {
+    loginctl \
+	list-sessions -o json |
+	jq '.[] | select(.user == "'"$KID_USER"'").session' |
+	tr -d '"' |
+	grep -qv '^"[0-9]\\+"$'
+}
+
 kick() {
     if [ $DRY_RUN = 1 ]; then
 	msg "Would be kicking $KID_USER"
@@ -36,15 +44,43 @@ kick() {
     fi
 }
 
-alert() {
+sound_alert() {
     if [ $DRY_RUN = 1 ]; then
-	msg "Would be sounding alert"
+	msg "Would be sounding alert $1"
     else
-	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay $1" || true &
+	msg "Alert $1"
+	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay $1 >/dev/null 2>&1" || true &
     fi
 }
 
-ialert=1
+alert() {
+    alert_file=$ALERT_PATH/${ALERT_FILES[$1]}
+    alert_file=${alert_file:a}
+    sound_alert $alert_file
+}
+
+# Find the largest applicable alert index given the remaining time
+#
+# Alert thresholds are real numbers t_1 > t_2 > ... > t_m
+#
+# Find the largest i such that
+#  t_i > t > t_{i+1}
+
+find_alert_index() {
+    local i
+    local thr
+    local T=$1
+    alert_index=0
+    for (( i=1; i<=$#ALERT_THRESHOLDS; i++ )) ; do
+	(( thr=${ALERT_THRESHOLDS[i]} ))
+	if (( T <= thr )) ; then
+	    alert_index=$i
+	fi
+    done
+    msg "Alert index for $1 is $alert_index"
+}
+
+last_alert_index=0
 
 $CLIENT --url $URL \
 	--sender-subject $KID \
@@ -58,22 +94,22 @@ $CLIENT --url $URL \
     fi
     
     if [ $T = 0 ]; then
+	# Ran out of time
+	# Kick user
 	kick
-	ialert=0
+	last_alert_index=0
 	continue
     fi
 
-    do_alert=0
-    for (( i=ialert; i<=$#ALERT_THRESHOLDS; i++ )) ; do
-	(( thr=${ALERT_THRESHOLDS[ialert]} ))
-	if (( T <= thr )) ; then
-	    do_alert=1
-	    (( ialert=i+1 ))
+    if is_logged_in ; then
+	find_alert_index $T
+
+	msg "$alert_index $last_alert_index al"
+	if (( alert_index != last_alert_index )) ; then
+	    if (( alert_index > last_alert_index )) ; then
+		alert $alert_index
+	    fi
+	    last_alert_index=$alert_index
 	fi
-    done
-    if (( do_alert != 0 )) ; then
-	alert_file=$ALERT_PATH/${ALERT_FILES[$do_alert]}
-	alert_file=${alert_file:a}
-	alert $alert_file
     fi
 done
