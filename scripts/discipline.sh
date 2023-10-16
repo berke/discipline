@@ -40,7 +40,7 @@ alert() {
     if [ $DRY_RUN = 1 ]; then
 	msg "Would be sounding alert"
     else
-	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay ${ALERT:a}" || true
+	su $KID_USER -c "XDG_RUNTIME_DIR=/run/user/1000 aplay $1" || true &
     fi
 }
 
@@ -59,6 +59,7 @@ $CLIENT --url $URL \
     
     if [ $T = 0 ]; then
 	kick
+	ialert=0
 	continue
     fi
 
@@ -71,6 +72,8 @@ $CLIENT --url $URL \
 	fi
     done
     if (( do_alert != 0 )) ; then
-	alert
+	alert_file=$ALERT_PATH/${ALERT_FILES[$do_alert]}
+	alert_file=${alert_file:a}
+	alert $alert_file
     fi
 done
