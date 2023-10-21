@@ -31,6 +31,10 @@ use tokio_tungstenite::{
     tungstenite
 };
 use tungstenite::Message;
+use time::{
+    Duration,
+    OffsetDateTime
+};
 
 use gtk4 as gtk;
 
@@ -49,6 +53,7 @@ use gtk::{
     PolicyType,
     ScrolledWindow,
     ScrollablePolicy,
+    Separator,
     TextBuffer,
     TextView
 };
@@ -213,6 +218,12 @@ fn main()->glib::ExitCode {
 	.application_id(APP_ID)
 	.build();
 
+    unsafe {
+	time::util::local_offset::set_soundness(
+	    time::util::local_offset::Soundness::Unsound
+	);
+    }
+
     app.connect_activate(move |app| {
 	let config = Config::open(&config_path)
 	    .expect("Cannot open configuration file");
@@ -226,7 +237,7 @@ fn main()->glib::ExitCode {
 
 	let window = ApplicationWindow::builder()
 	    .application(app)
-	    .default_width(640)
+	    .default_width(800)
 	    .default_height(512)
 	    .title("Discipline")
 	    .build();
@@ -248,12 +259,47 @@ fn main()->glib::ExitCode {
 	    let authorize_1h = Button::with_label("1h");
 	    box2.append(&authorize_1h);
 
+	    let sep1 = Separator::new(Orientation::Vertical);
+	    box2.append(&sep1);
+
+	    let authorize_other = Button::with_label("For: ");
+	    box2.append(&authorize_other);
 	    let duration_h = Entry::builder()
 		.input_purpose(InputPurpose::Number)
 		.build();
+	    duration_h.set_text("1");
 	    box2.append(&duration_h);
-	    let authorize_hours = Button::with_label(" hours");
-	    box2.append(&authorize_hours);
+	    let hour_label = Label::new(Some("h"));
+	    box2.append(&hour_label);
+	    let duration_m = Entry::builder()
+		.input_purpose(InputPurpose::Number)
+		.build();
+	    box2.append(&duration_m);
+	    duration_h.set_text("0");
+	    let min_label = Label::new(Some("m"));
+	    duration_m.set_text("15");
+	    box2.append(&min_label);
+
+	    let sep2 = Separator::new(Orientation::Vertical);
+	    box2.append(&sep2);
+
+	    let authorize_until = Button::with_label("Until: ");
+	    box2.append(&authorize_until);
+	    let until_h = Entry::builder()
+		.input_purpose(InputPurpose::Number)
+		.build();
+	    until_h.set_text("22");
+	    box2.append(&until_h);
+	    let until_label = Label::new(Some(":"));
+	    box2.append(&until_label);
+	    let until_m = Entry::builder()
+		.input_purpose(InputPurpose::Number)
+		.build();
+	    box2.append(&until_m);
+	    until_m.set_text("00");
+
+	    let sep2 = Separator::new(Orientation::Vertical);
+	    box2.append(&sep2);
 	    
 	    let cancel = Button::with_label("Cancel");
 	    box2.append(&cancel);
@@ -273,20 +319,58 @@ fn main()->glib::ExitCode {
 	    frame.set_child(Some(&box2));
 	    box1.append(&frame);
 
-	    authorize_hours.connect_clicked({
+	    authorize_other.connect_clicked({
 		let duration_h = duration_h.clone();
+		let duration_m = duration_m.clone();
 		let message_buf = message_buf.clone();
 		let send_cmd = send_cmd.refer();
 		let kid = kid.clone();
 		move |_| {
 		    let duration_h_text = duration_h.text();
-		    if let Ok(d) = duration_h_text.parse::<f64>() {
-			authorize(message_buf.clone(),
-				  send_cmd.refer(),
-				  kid.clone(),
-				  d*3600.0);
+		    let duration_m_text = duration_m.text();
+		    if let Ok(h) = duration_h_text.parse::<f64>() {
+			if let Ok(m) = duration_m_text.parse::<f64>() {
+			    authorize(message_buf.clone(),
+				      send_cmd.refer(),
+				      kid.clone(),
+				      h*3600.0 + m*60.0);
+			} else {
+			    message_buf.append("Invalid number of minutes");
+			}
 		    } else {
-			message_buf.append("Invalid number");
+			message_buf.append("Invalid number of hours");
+		    }
+		}
+	    });
+
+	    authorize_until.connect_clicked({
+		let until_h = until_h.clone();
+		let until_m = until_m.clone();
+		let message_buf = message_buf.clone();
+		let send_cmd = send_cmd.refer();
+		let kid = kid.clone();
+		move |_| {
+		    let until_h_text = until_h.text();
+		    let until_m_text = until_m.text();
+		    if let Ok(h) = until_h_text.parse::<u8>() {
+			if let Ok(m) = until_m_text.parse::<u8>() {
+			    let time_now = OffsetDateTime::now_local()
+				.expect("Cannot get local time");
+			    let time_later =
+				time_now
+				.replace_hour(h).expect("Bad hour")
+				.replace_minute(m).expect("Bad minuet");
+			    let delta = (time_later - time_now).as_seconds_f64();
+			    
+			    authorize(message_buf.clone(),
+				      send_cmd.refer(),
+				      kid.clone(),
+				      delta);
+			} else {
+			    message_buf.append("Invalid minutes");
+			}
+		    } else {
+			message_buf.append("Invalid hours");
 		    }
 		}
 	    });
@@ -370,6 +454,9 @@ fn main()->glib::ExitCode {
 				    time_remaining,
 				    last_ping:_
 				} => {
+				    // let time_now = OffsetDateTime::now_local()
+				    // 	.expect("Cannot get local time");
+				    // let t = time_now + Duration::seconds_f64(time_remaining);
 				    message_buf.append(
 					&format!(
 					    "Subject {} time remaining {}",
@@ -409,20 +496,23 @@ impl Seconds {
 
 impl Display for Seconds {
     fn fmt(&self,o:&mut std::fmt::Formatter<'_>)->Result<(),std::fmt::Error> {
+	let time_now = OffsetDateTime::now_local()
+	    .expect("Cannot get local time");
 	let t = self.0;
+	let t_expired = time_now + Duration::seconds_f64(t);
 	if t < 0.1 {
-	    write!(o,"zero")
+	    write!(o,"zero")?;
 	} else {
 	    if t < 60.0 {
 		let sec = t.round() as isize;
 		write!(o,"{} second{}",
 		       sec,
-		       if sec == 1 { "" } else { "s" })
+		       if sec == 1 { "" } else { "s" })?;
 	    } else if t < 3600.0 {
 		let min = (t/60.0).round() as isize;
 		write!(o,"{} minute{}",
 		       min,
-		       if min == 1 { "" } else { "s" })
+		       if min == 1 { "" } else { "s" })?;
 	    } else {
 		let hour = (t/3600.0).round() as isize;
 		let min = ((t - 3600.0*(hour as f64))/60.0).round() as isize;
@@ -434,8 +524,9 @@ impl Display for Seconds {
 			   min,
 			   if min == 1 { "" } else { "s" })?;
 		}
-		Ok(())
 	    }
 	}
+	write!(o," (until {})",t_expired)?;
+	Ok(())
     }
 }
