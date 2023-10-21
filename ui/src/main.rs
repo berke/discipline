@@ -237,7 +237,7 @@ fn main()->glib::ExitCode {
 
 	let window = ApplicationWindow::builder()
 	    .application(app)
-	    .default_width(800)
+	    .default_width(900)
 	    .default_height(512)
 	    .title("Discipline")
 	    .build();
